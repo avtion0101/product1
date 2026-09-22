@@ -1,0 +1,50 @@
+{
+  "source_root": "D:/基础项目生成办法",
+  "provider": "codex",
+  "providers": {
+    "codex": {
+      "label": "本机 Codex 登录",
+      "model": ""
+    },
+    "gemini": {
+      "label": "Google Gemini API",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key_env": "GEMINI_API_KEY",
+      "model": "gemini-3.8-flash",
+      "supports_reasoning_effort": true
+    },
+    "grok": {
+      "label": "xAI Grok API",
+      "base_url": "https://api.x.ai/v1",
+      "api_key_env": "XAI_API_KEY",
+      "model": "grok-4.7"
+    },
+    "openai": {
+      "label": "OpenAI API",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": ""
+    },
+    "custom": {
+      "label": "其他 OpenAI 兼容 API",
+      "base_url": "",
+      "api_key_env": "CUSTOM_API_KEY",
+      "model": ""
+    }
+  },
+  "model": "",
+  "reasoning_effort": "medium",
+  "module_count": 10,
+  "min_module_lines": 500,
+  "code_pages": 65,
+  "code_lines_per_page": 50,
+  "max_attempts": 2,
+  "call_timeout_seconds": 1200,
+  "price_per_project": 30,
+  "development_hardware": "本机Windows或Mac电脑，具体配置由交付者确认",
+  "runtime_hardware": "64位处理器，8GB内存，1GB可用磁盘空间",
+  "developer_tool": "Codex、Python",
+  "runtime_os": "Windows 10/11或macOS 13及以上",
+  "manual_template": "模板/操作手册.docx",
+  "code_template": "模板/代码.docx"
+}

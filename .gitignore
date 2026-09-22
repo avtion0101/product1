@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.generator_venv/
+.venv/
+工具/.packages/
+生成结果/
+验证记录/
+*.log
