@@ -195,7 +195,18 @@ class ContractTests(unittest.TestCase):
             command = (project / "启动软件.cmd").read_bytes()
             self.assertIn(b"\r\n", command)
             self.assertNotIn(b"\n", command.replace(b"\r\n", b""))
-            self.assertTrue((project / "启动软件.command").read_text(encoding="utf-8").startswith("#!/bin/zsh"))
+            mac_launcher = (project / "启动软件.command").read_text(encoding="utf-8")
+            self.assertTrue(mac_launcher.startswith("#!/bin/zsh"))
+            self.assertIn("sys.version_info < (3, 11)", mac_launcher)
+            self.assertIn("--only-binary=:all:", mac_launcher)
+            food_plan = sample_plan()
+            food_plan["name"] = "食品添加剂超量使用检测系统"
+            food_project = root / "食品添加剂超量使用检测系统"
+            seed_project(food_project, food_plan)
+            self.assertTrue((food_project / "food_ui.py").exists())
+            self.assertTrue((food_project / "food_scene.py").exists())
+            self.assertIn("opencv-python-headless>=4.12,<4.14", (food_project / "requirements.txt").read_text(encoding="utf-8"))
+            self.assertIn("import PyQt6, cv2", (food_project / "启动软件.command").read_text(encoding="utf-8"))
             target = root / "result.zip"
             package(root / "交付包", target)
             from zipfile import ZipFile

@@ -12,20 +12,19 @@ if [[ -z "$PYTHON_BIN" ]]; then
   done
 fi
 if [[ -z "$PYTHON_BIN" ]] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
-  echo "需要 Python 3.11 以上。推荐：brew install python@3.12 python-tk@3.12"
-  read
+  echo "需要 Python 3.11 以上。推荐先执行：brew install python@3.12"
+  read -r
   exit 1
 fi
-if ! "$PYTHON_BIN" -c 'import tkinter' >/dev/null 2>&1; then
-  echo "缺少 Tk 图形界面。请执行：brew install python-tk@3.12"
-  read
-  exit 1
+if [[ ! -x ".venv/bin/python" ]]; then
+  "$PYTHON_BIN" -m venv .venv
 fi
-if [[ ! -x ".generator_venv/bin/python" ]]; then
-  "$PYTHON_BIN" -m venv .generator_venv
+if ! .venv/bin/python -c "@DEPENDENCY_CHECK@" >/dev/null 2>&1; then
+  echo "首次安装 PyQt6 和 OpenCV 预编译依赖，请保持联网。"
+  if ! .venv/bin/python -m pip install --only-binary=:all: -r requirements.txt; then
+    echo "依赖安装失败。请核对 macOS 版本、网络和 Python 版本后重试。"
+    read -r
+    exit 1
+  fi
 fi
-.generator_venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: -q -r 工具/requirements-generator.txt
-export PYTHONPATH="$ROOT/工具/.packages"
-export PYTHONUTF8=1
-export PYTHONIOENCODING=utf-8
-exec .generator_venv/bin/python 工具/studio.py "$@"
+exec .venv/bin/python main.py

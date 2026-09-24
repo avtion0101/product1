@@ -21,6 +21,21 @@ from learn import learn
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 HIDDEN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+PRODUCT_STANDARD = """
+产品完成标准：以真实用户任务而非算法目录组织软件。先定义主业务对象、主键、角色、
+输入来源和从建立任务到审核报告的端到端流程；所有模块必须围绕同一业务记录协作，
+不可成为十个互不关联的演示页面。普通用户界面使用有标签、有单位、有校验反馈的
+表单、可筛选表格、详情抽屉和明确的状态动作；JSON仅作为内部交换或高级导出，
+不得成为主界面输入方式。字段树、嵌套键值表和原始对象结构也不得直接充当录入界面；
+对象数组应转译为有标题的记录卡片或分步表单，布尔值用明确选项、数值显示单位，
+专业字段使用业务名称而不是程序键名。主工作台要有任务概览、异常待办、操作记录和可追溯详情，
+不同业务页面应采用适合其数据的布局，不得机械复制同一个输入图表模板。
+可视化必须与真实业务字段及选中记录联动；3D只用于能够解释空间、层级或关系的场景，
+不得用无关立体图代替检测依据，也不得伪称实时传感器或AI检测。
+样例数据必须标注演示，不得冒充真实标准限量。需要保存原始输入、规则来源与版本、
+计算过程、人员、时间和复核意见。完整的样例用户任务必须能在不编辑JSON的情况下
+从录入走到初筛、复核和报告。界面在Windows与macOS下都应可操作。
+"""
 CONTRACT = """
 每个模块的logic.py必须定义可无参数实例化的Engine类，只能依赖Python标准库。
 Engine.example()返回非空JSON可序列化dict，至少包含5条有领域意义的样例记录。
@@ -84,35 +99,29 @@ def seed_project(project, plan):
     project.mkdir(parents=True, exist_ok=True)
     write_json(project / "project.json", plan)
     shutil.copy2(HERE / "templates/runtime.py", project / "runtime.py")
+    food_case = "食品添加剂" in plan["name"]
+    if food_case:
+        shutil.copy2(HERE / "templates/food_ui.py", project / "food_ui.py")
+        shutil.copy2(HERE / "templates/food_scene.py", project / "food_scene.py")
     (project / "main.py").write_text("from runtime import main\n\nif __name__ == '__main__':\n    main()\n", encoding="utf-8")
-    (project / "requirements.txt").write_text("PyQt6>=6.7,<7\n", encoding="utf-8")
-    windows_launcher = (
-        '@echo off\nchcp 65001 >nul\ncd /d "%~dp0"\n'
-        'if not exist ".venv\\Scripts\\python.exe" (\n'
-        '  python -m venv .venv\n  if errorlevel 1 goto failed\n)\n'
-        '".venv\\Scripts\\python.exe" -c "import PyQt6" 2>nul\n'
-        'if errorlevel 1 (\n  ".venv\\Scripts\\python.exe" -m pip install -r requirements.txt\n'
-        '  if errorlevel 1 goto failed\n)\n'
-        '".venv\\Scripts\\python.exe" main.py\nif errorlevel 1 goto failed\nexit /b 0\n'
-        ':failed\necho 启动失败，请确认已安装Python 3.11以上并加入PATH。\npause\nexit /b 1\n'
-    )
+    (project / "requirements.txt").write_text(
+        "PyQt6>=6.7,<7\n" + ("opencv-python-headless>=4.12,<4.14\n" if food_case else ""),
+        encoding="utf-8")
+    dependency_check = "import PyQt6, cv2" if food_case else "import PyQt6"
+    windows_launcher = (HERE / "templates/启动软件.cmd").read_text(encoding="utf-8").replace(
+        "@DEPENDENCY_CHECK@", dependency_check)
     (project / "启动软件.cmd").write_bytes(windows_launcher.replace("\n", "\r\n").encode("utf-8"))
     (project / "启动软件.command").write_text(
-        '#!/bin/zsh\nset -e\nROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\ncd "$ROOT"\n'
-        'PYTHON_BIN="${PYTHON_BIN:-python3}"\n'
-        'if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then echo "请先安装Python 3.11以上"; read; exit 1; fi\n'
-        'if [[ ! -x ".venv/bin/python" ]]; then "$PYTHON_BIN" -m venv .venv; fi\n'
-        'if ! .venv/bin/python -c "import PyQt6" 2>/dev/null; then '
-        '.venv/bin/python -m pip install -r requirements.txt; fi\n'
-        'exec .venv/bin/python main.py\n', encoding="utf-8")
+        (HERE / "templates/启动软件.command").read_text(encoding="utf-8").replace(
+            "@DEPENDENCY_CHECK@", dependency_check), encoding="utf-8")
     (project / "modules").mkdir(exist_ok=True)
     (project / "modules/__init__.py").write_text("", encoding="utf-8")
     (project / "README.md").write_text(
         f"# {plan['name']} V1.0\n\nWindows双击启动软件.cmd；macOS首次运行执行 "
-        "`chmod +x 启动软件.command`，以后可双击启动。首次启动会创建venv并安装PyQt6。\n\n"
+        "`chmod +x 启动软件.command`，以后可双击启动。首次启动会创建venv并安装项目依赖。\n\n"
         "演示管理员：admin / Admin123!。注册账号默认为操作员。\n\n"
-        "输入为可编辑JSON，包含实际字段和样例；执行计算后保存结果。"
-        "提交后由管理员通过/退回。可导出JSON并从历史记录恢复。\n\n"
+        "业务界面提供表单、表格与任务工作台；JSON仅用于高级导出。"
+        "执行计算后保存结果，提交后由管理员通过或退回。\n\n"
         "本地算法和演示样例不连接真实外部设备。SQLite位于data/app.sqlite。\n",
         encoding="utf-8")
 
@@ -249,14 +258,19 @@ class Pipeline:
             elif plan_path.exists():
                 plan = read_json(plan_path)
             else:
+                brief = os.environ.get("GENERATOR_PROJECT_BRIEF", "").strip()
                 prompt = (f"为软件《{name}》设计{self.settings['module_count']}个有实际算法的独立业务模块。"
                           "只实现本地可验证的Python标准库算法，不声称调用外部AI或真实设备。"
                           "不要只有增删改查。可选真实排序、统计、路径、规则、几何、排程、质量评估。"
+                          "每个模块id必须是互不重复的小写英文标识符，以字母开头，只含小写字母、数字和下划线，长度2至36。"
                           "purpose 8至50字，domain 2至50字，main_features 500至1300字，"
                           "technical_features 10至100字。中文菜单，不要中英括号混排。"
-                          "主界面提供输入、计算、提交复核、管理员通过/退回、JSON导出和历史记录。"
+                          "主界面提供结构化输入、计算、提交复核、管理员通过/退回、报告导出和历史记录。"
+                          + PRODUCT_STANDARD
+                          +
                           "每个模块必须描述具体算法和至少两条业务规则。visualization按返回数据选bars/line/matrix/network。"
-                          "\n案例知识：\n" + knowledge)
+                          + ("\n项目补充要求：\n" + brief if brief else "")
+                          + "\n案例知识：\n" + knowledge)
                 errors = ""
                 for attempt in range(self.settings["max_attempts"]):
                     plan = client.request("业务方案", prompt + "\n上次校验问题：" + errors, PLAN)
@@ -282,6 +296,7 @@ class Pipeline:
                         bundle = read_json(module_cache)
                     else:
                         prompt = (CONTRACT.replace("MIN_LINES", str(self.settings["min_module_lines"])).replace("MODULE_ID", spec["id"])
+                                  + PRODUCT_STANDARD
                                   + "\n软件：" + name + "\n模块需求：" + json.dumps(spec, ensure_ascii=False)
                                   + "\n上次实际检查错误：" + error + "\n需修复的上次代码：" + previous)
                         bundle = client.request(spec["id"], prompt, ENGINE)
