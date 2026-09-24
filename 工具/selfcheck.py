@@ -214,6 +214,28 @@ class ContractTests(unittest.TestCase):
                 info = next(i for i in archive.infolist() if i.filename.endswith("启动软件.command"))
                 self.assertTrue((info.external_attr >> 16) & 0o111)
 
+    def test_generated_business_form(self):
+        if importlib.util.find_spec("PyQt6") is None:
+            self.skipTest("PyQt6 will be installed during generation")
+        from PyQt6.QtWidgets import QApplication
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp) / TEST_NAME
+            seed_project(project, sample_plan())
+            spec = importlib.util.spec_from_file_location("generated_form_test", project / "runtime.py")
+            runtime = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runtime)
+            app = QApplication.instance() or QApplication([])
+            editor = runtime.FieldEditor(
+                {"factor": 2, "records": [{"name": "甲", "quantity": 3}], "enabled": True},
+                {"factor": "换算系数", "records.name": "记录名称"})
+            self.assertEqual(editor.value()["records"][0]["quantity"], 3)
+            editor.fields["factor"].control.setText("4")
+            editor.fields["records"].add_item({"name": "乙", "quantity": 5})
+            self.assertEqual(editor.value()["factor"], 4)
+            self.assertEqual(len(editor.value()["records"]), 2)
+            self.assertEqual(runtime.field_label("name", editor.labels, ("records",)), "记录名称")
+            editor.close()
+
     def test_bundled_template_fallback(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "模板"
@@ -228,9 +250,7 @@ class ContractTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self, *_): return False
             def read(self):
-                return json.dumps({"choices": [{"message": {"content": '{"source":"x","tests":"y"}'}}],
-                                   "usage": {"prompt_tokens": 12, "completion_tokens": 5,
-                                             "prompt_tokens_details": {"cached_tokens": 3}}}).encode()
+                return json.dumps({"choices": [{"message": {"content": '{"source":"x","tests":"y"}'}}]}).encode()
 
         with tempfile.TemporaryDirectory() as temp:
             settings = read_json(HERE / "settings.json")
@@ -246,7 +266,7 @@ class ContractTests(unittest.TestCase):
                 all_logs = "".join(p.read_text(encoding="utf-8", errors="ignore")
                                    for p in Path(temp).glob("*") if p.is_file())
                 self.assertNotIn("secret-for-offline-test", all_logs)
-                self.assertEqual(client.usage[-1]["usage"]["cached_input_tokens"], 3)
+                self.assertFalse((Path(temp) / "usage.json").exists())
             finally:
                 os.environ.pop("CUSTOM_API_KEY", None)
 

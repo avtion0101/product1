@@ -1,5 +1,5 @@
 {
-  "source_root": "D:/基础项目生成办法",
+  "source_root": "",
   "provider": "codex",
   "providers": {
     "codex": {
@@ -10,14 +10,13 @@
       "label": "Google Gemini API",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "api_key_env": "GEMINI_API_KEY",
-      "model": "gemini-3.8-flash",
-      "supports_reasoning_effort": true
+      "model": ""
     },
     "grok": {
       "label": "xAI Grok API",
       "base_url": "https://api.x.ai/v1",
       "api_key_env": "XAI_API_KEY",
-      "model": "grok-4.7"
+      "model": ""
     },
     "openai": {
       "label": "OpenAI API",
@@ -40,7 +39,6 @@
   "code_lines_per_page": 50,
   "max_attempts": 2,
   "call_timeout_seconds": 1200,
-  "price_per_project": 30,
   "development_hardware": "本机Windows或Mac电脑，具体配置由交付者确认",
   "runtime_hardware": "64位处理器，8GB内存，1GB可用磁盘空间",
   "developer_tool": "Codex、Python",

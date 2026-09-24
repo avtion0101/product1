@@ -1,5 +1,6 @@
 """Shared runtime copied into each generated deliverable."""
 import argparse
+import copy
 import hashlib
 import hmac
 import importlib
@@ -10,15 +11,16 @@ import secrets
 import sqlite3
 import sys
 import tempfile
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QSplitter,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
     QFileDialog,
 )
 
@@ -32,7 +34,7 @@ QListWidget::item {padding:13px;border-radius:6px;}
 QListWidget::item:selected {background:#2366a3;color:white;}
 QPushButton {background:#2366a3;color:white;border:0;padding:10px 16px;border-radius:5px;}
 QPushButton:disabled {background:#aebdcb;}
-QLineEdit,QTextEdit,QTableWidget,QComboBox {background:white;border:1px solid #cbd7e3;
+QLineEdit,QTableWidget,QComboBox {background:white;border:1px solid #cbd7e3;
 padding:6px;border-radius:4px;}
 QLabel#title {font-size:23px;font-weight:600;color:#132940;}
 QLabel#sub {color:#597085;}
@@ -224,6 +226,99 @@ def check_result(result):
     json.dumps(result, ensure_ascii=False, allow_nan=False)
 
 
+FIELD_NAMES = {
+    "name": "名称", "code": "代码", "id": "编号", "records": "记录",
+    "items": "条目", "quantity": "数量", "factor": "系数", "value": "数值",
+    "unit": "单位", "date": "日期", "category": "类别", "type": "类型",
+    "description": "说明", "status": "状态", "amount": "用量",
+}
+
+
+def field_label(key, labels=None, path=()):
+    labels = labels or {}
+    return labels.get(".".join((*path, key))) or labels.get(key) or FIELD_NAMES.get(
+        key, key.replace("_", " ").strip().title())
+
+
+class FieldEditor(QWidget):
+    """Render JSON-compatible example data as editable business controls."""
+    def __init__(self, sample, labels=None, path=(), parent=None):
+        super().__init__(parent)
+        self.sample = copy.deepcopy(sample)
+        self.labels = labels or {}
+        self.path = path
+        if isinstance(sample, dict):
+            self.kind = "object"
+            self.fields = {}
+            layout = QFormLayout(self)
+            for key, value in sample.items():
+                editor = FieldEditor(value, self.labels, (*path, key))
+                self.fields[key] = editor
+                layout.addRow(field_label(key, self.labels, path), editor)
+        elif isinstance(sample, list):
+            self.kind = "list"
+            self.template = copy.deepcopy(sample[0]) if sample else ""
+            self.items = []
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.list_layout = QVBoxLayout()
+            layout.addLayout(self.list_layout)
+            for value in sample:
+                self.add_item(value)
+            button = QPushButton("添加记录")
+            button.clicked.connect(lambda: self.add_item(copy.deepcopy(self.template)))
+            layout.addWidget(button)
+        elif isinstance(sample, bool):
+            self.kind = "bool"
+            self.control = QComboBox(self)
+            self.control.addItems(["是", "否"])
+            self.control.setCurrentIndex(0 if sample else 1)
+            QVBoxLayout(self).addWidget(self.control)
+        else:
+            self.kind = "scalar"
+            self.control = QLineEdit(self)
+            self.control.setText("" if sample is None else str(sample))
+            QVBoxLayout(self).addWidget(self.control)
+
+    def add_item(self, value):
+        box = QGroupBox(f"记录 {len(self.items) + 1}")
+        layout = QVBoxLayout(box)
+        editor = FieldEditor(value, self.labels, self.path)
+        layout.addWidget(editor)
+        remove = QPushButton("删除这条记录")
+        remove.clicked.connect(lambda: self.remove_item(box))
+        layout.addWidget(remove)
+        self.list_layout.addWidget(box)
+        self.items.append((box, editor))
+
+    def remove_item(self, box):
+        self.items = [(container, editor) for container, editor in self.items if container is not box]
+        self.list_layout.removeWidget(box)
+        box.deleteLater()
+        for index, (container, _) in enumerate(self.items, 1):
+            container.setTitle(f"记录 {index}")
+
+    def value(self):
+        if self.kind == "object":
+            return {key: editor.value() for key, editor in self.fields.items()}
+        if self.kind == "list":
+            return [editor.value() for _, editor in self.items]
+        if self.kind == "bool":
+            return self.control.currentIndex() == 0
+        text = self.control.text().strip()
+        if isinstance(self.sample, int) and not isinstance(self.sample, bool):
+            try:
+                return int(text)
+            except ValueError as exc:
+                raise ValueError(f"请输入整数：{text}") from exc
+        if isinstance(self.sample, float):
+            try:
+                return float(text)
+            except ValueError as exc:
+                raise ValueError(f"请输入数字：{text}") from exc
+        return text
+
+
 class BasePage(QWidget):
     def __init__(self, store, spec, engine):
         super().__init__()
@@ -251,11 +346,13 @@ class BasePage(QWidget):
         root.addWidget(self.status)
         body = QSplitter()
         left = QWidget(); fl = QVBoxLayout(left)
-        desc = QLabel("输入数据 / JSON\n" + spec["input_description"])
+        desc = QLabel("业务数据\n" + spec["input_description"])
         desc.setWordWrap(True)
         fl.addWidget(desc)
-        self.editor = QTextEdit(); self.editor.setMinimumWidth(290)
-        fl.addWidget(self.editor)
+        self.form_area = QScrollArea()
+        self.form_area.setWidgetResizable(True)
+        self.form_area.setMinimumWidth(320)
+        fl.addWidget(self.form_area, 1)
         rules = QLabel("业务规则\n" + "\n".join("• " + r for r in spec["rules"]))
         rules.setWordWrap(True); fl.addWidget(rules)
         right = QWidget(); rl = QVBoxLayout(right)
@@ -269,6 +366,7 @@ class BasePage(QWidget):
         self.history.activated.connect(self.restore)
         root.addWidget(self.history)
         self.refresh_history()
+        self.load_demo()
 
     def guarded(self, fn):
         try:
@@ -277,12 +375,18 @@ class BasePage(QWidget):
             QMessageBox.warning(self, "操作未完成", str(exc))
 
     def load_demo(self):
-        self.editor.setPlainText(json.dumps(self.engine.example(), ensure_ascii=False, indent=2))
+        self.set_payload(self.engine.example())
         self.rid, self.result = None, None
         self.status.setText("草稿 · 样例数据已载入，可修改后计算")
 
+    def set_payload(self, payload):
+        label_method = getattr(self.engine, "field_labels", None)
+        labels = label_method() if callable(label_method) else {}
+        self.form = FieldEditor(payload, labels if isinstance(labels, dict) else {})
+        self.form_area.setWidget(self.form)
+
     def calculate(self):
-        payload = json.loads(self.editor.toPlainText())
+        payload = self.form.value()
         self.engine.validate(payload)
         result = self.engine.calculate(payload)
         check_result(result)
@@ -324,7 +428,7 @@ class BasePage(QWidget):
         if rid is None:
             return
         row = self.store.get(rid); self.rid = rid
-        self.editor.setPlainText(json.dumps(json.loads(row["payload"]), ensure_ascii=False, indent=2))
+        self.set_payload(json.loads(row["payload"]))
         self.show_result(json.loads(row["result"]))
         self.status.setText(f"记录 #{rid} · {row['state']} · 版本{row['version']}")
 
@@ -395,8 +499,7 @@ def capture(output):
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion"); app.setStyleSheet(STYLE)
     entries = []
-    with tempfile.TemporaryDirectory(prefix="project-capture-") as temp:
-        store = Store(Path(temp) / "demo.sqlite")
+    with tempfile.TemporaryDirectory(prefix="project-capture-") as temp, closing(Store(Path(temp) / "demo.sqlite")) as store:
         login = Login(store); login.show(); app.processEvents()
         def save(window, key, title, description, module=""):
             app.processEvents()
@@ -416,7 +519,7 @@ def capture(output):
             window.nav.setCurrentRow(i)
             page.load_demo()
             save(window, f"{i+2:02}_a", spec["title"] + " 输入准备",
-                 spec["input_description"] + "。单击载入样例，在左侧JSON输入区调整参数。", spec["id"])
+                 spec["input_description"] + "。单击载入样例，在左侧表单调整参数。", spec["id"])
             page.calculate()
             save(window, f"{i+2:02}_b", spec["title"] + " 计算结果",
                  "单击执行计算。算法：" + spec["algorithm"] + "。结果：" + page.result["summary"], spec["id"])
@@ -426,7 +529,7 @@ def capture(output):
             save(window, f"{i+2:02}_c", spec["title"] + " 复核与导出",
                  "单击提交复核，再由管理员单击复核通过。结果和状态存入SQLite，导出结果写入JSON。"
                  + "适用边界：" + spec["limitations"], spec["id"])
-        window.close(); store.close()
+        window.close()
     (output / "manifest.json").write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
     return entries
 

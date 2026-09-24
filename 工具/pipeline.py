@@ -39,6 +39,9 @@ PRODUCT_STANDARD = """
 CONTRACT = """
 每个模块的logic.py必须定义可无参数实例化的Engine类，只能依赖Python标准库。
 Engine.example()返回非空JSON可序列化dict，至少包含5条有领域意义的样例记录。
+建议实现Engine.field_labels()，返回输入字段路径到中文业务名称的映射，
+例如{"records.name":"记录名称","factor":"换算系数"}；界面将自动据此显示标签，
+未提供时才使用通用字段名。不要把程序字段名或原始JSON作为普通用户的输入界面。
 Engine.validate(payload)成功时返回None，非法输入抛ValueError，检查字段、类型、空值、范围及业务约束。
 Engine.calculate(payload)先验证，不能改变输入，必须返回JSON可序列化dict：
 {
@@ -209,7 +212,6 @@ class Pipeline:
 
     def run(self, name, resume=None, fixture=None):
         name = validate_name(name)
-        start = time.monotonic()
         if resume:
             run = Path(resume).resolve()
             if not run.is_relative_to((ROOT / "生成结果").resolve()):
@@ -220,7 +222,7 @@ class Pipeline:
         else:
             run = ROOT / "生成结果" / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + name + "_" + uuid.uuid4().hex[:4])
             run.mkdir(parents=True)
-            state = {"name": name, "status": "运行中", "elapsed_seconds": 0, "completed_modules": []}
+            state = {"name": name, "status": "运行中", "completed_modules": []}
         self.run_dir = run
         write_json(run / "settings_snapshot.json", self.settings)
         logs, cache = run / "日志", run / "缓存"
@@ -243,13 +245,16 @@ class Pipeline:
                 from environment import ensure_environment
                 ensure_environment(ROOT, self.log, self.settings)
             source_root = Path(self.settings.get("source_root", ""))
+            knowledge_path = ROOT / "知识库/案例提炼.md"
             if source_root.exists() and (source_root / "案例").exists():
-                learn(source_root, ROOT / "知识库")
-            elif not (ROOT / "知识库/案例提炼.md").exists():
+                learned = run / "案例知识"
+                learn(source_root, learned)
+                knowledge_path = learned / "案例提炼.md"
+            elif not knowledge_path.exists():
                 raise FileNotFoundError("原案例目录不可用，且生成器内没有已提炼知识库")
             else:
                 self.log("原案例目录不可用，使用生成器内置的案例知识与模板副本。")
-            knowledge = (ROOT / "知识库/案例提炼.md").read_text(encoding="utf-8")
+            knowledge = knowledge_path.read_text(encoding="utf-8")
             self.status("2/7 生成业务方案", 7)
             plan_path = cache / "plan.json"
             if fixture:
@@ -326,7 +331,10 @@ class Pipeline:
                   logs / "界面截图.log", 240, self.cancel)
             capture_count = verify_captures(captures, plan["modules"])
             self.status("5/7 套用原模板生成资料", 75)
-            templates = distill(self.settings["source_root"], self.settings, ROOT / "知识库/模板")
+            template_cache = run / "模板缓存"
+            shutil.copytree(ROOT / "知识库/模板/原模板副本",
+                            template_cache / "原模板副本", dirs_exist_ok=True)
+            templates = distill(self.settings["source_root"], self.settings, template_cache)
             manual, code = delivery / "操作手册.docx", delivery / "代码.docx"
             build_manual(templates["manual_template"]["path"], project, captures, manual)
             build_code(templates["code_template"]["path"], project, code,
@@ -343,7 +351,7 @@ class Pipeline:
             for doc in (manual, code):
                 images = render_pdf(doc.with_suffix(".pdf"), qa / doc.stem)
                 contact_sheets(images, qa / doc.stem)
-            self.status("7/7 输出验收清单、成本统计与压缩包", 96)
+            self.status("7/7 输出验收清单与压缩包", 96)
             report = {"status": "自动检查通过，待人工验收", "name": name, "modules": len(plan["modules"]),
                       "screenshots": capture_count, "source_nonblank_lines": source_count(project),
                       **checks, "manual_review": ["专业算法适用性", "所有页面可读性", "界面效果", "开发硬件配置", "委托方最终验收"],
@@ -365,21 +373,4 @@ class Pipeline:
             self.log(str(exc))
             raise
         finally:
-            state["elapsed_seconds"] += round(time.monotonic() - start, 1)
-            usage = client.usage
-            totals = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
-            unknown = 0
-            for entry in usage:
-                if entry["usage"] is None:
-                    unknown += 1
-                else:
-                    for key in totals:
-                        totals[key] += entry["usage"].get(key, 0)
-            report = {"seconds": state["elapsed_seconds"], "minutes": round(state["elapsed_seconds"]/60, 1),
-                      "calls": len(usage), "token_totals": totals, "calls_without_usage": unknown,
-                      "token_count_complete": unknown == 0, "payment_assumption_yuan": self.settings["price_per_project"],
-                      "gross_yuan_per_hour": round(self.settings["price_per_project"]*3600/max(state["elapsed_seconds"],1), 2),
-                      "provider": client.provider, "billing": client.billing,
-                      "notes": "输入token含缓存部分，不重复加总。时间含模型等待、测试和资料生成，不含人工验收及沟通。失败任务的时薪不代表收入。"}
-            write_json(run / "耗时与Token.json", report)
             write_json(run / "state.json", state)

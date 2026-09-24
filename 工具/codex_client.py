@@ -23,7 +23,12 @@ def find_codex():
     local = os.environ.get("LOCALAPPDATA")
     if local:
         candidates.extend((Path(local) / "OpenAI/Codex/bin").glob("*/codex.exe"))
-    candidates.extend([Path.home() / ".local/bin/codex", Path.home() / ".local/bin/codex.exe"])
+    candidates.extend([
+        Path.home() / ".local/bin/codex",
+        Path.home() / ".local/bin/codex.exe",
+        Path("/opt/homebrew/bin/codex"),
+        Path("/usr/local/bin/codex"),
+    ])
     candidates = [p for p in candidates if p.exists()]
     if candidates:
         return str(max(candidates, key=lambda p: p.stat().st_mtime))
@@ -65,15 +70,12 @@ def credential_status(settings):
 
 class CodexClient:
     provider = "codex"
-    billing = "ChatGPT登录额度；不按API价格推定实际扣费"
 
     def __init__(self, settings, directory, log=print, cancel=None):
         self.settings, self.directory, self.log = settings, Path(directory), log
         self.directory.mkdir(parents=True, exist_ok=True)
         self.cancel = cancel or threading.Event()
-        self.counter = len(list(self.directory.glob("*.events.jsonl")))
-        usage_path = self.directory / "usage.json"
-        self.usage = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.exists() else []
+        self.counter = len(list(self.directory.glob("*.prompt.txt")))
 
     def request(self, stage, prompt, schema):
         if self.cancel.is_set():
@@ -99,7 +101,7 @@ class CodexClient:
         started, heartbeat = time.monotonic(), time.monotonic()
         q = queue.Queue()
         self.log(f"Codex开始 {stage}")
-        with errors.open("w", encoding="utf-8") as err, (self.directory / (stem + ".events.jsonl")).open("w", encoding="utf-8") as events:
+        with errors.open("w", encoding="utf-8") as err:
             p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                  encoding="utf-8", errors="replace", env=env, creationflags=HIDDEN)
 
@@ -109,7 +111,6 @@ class CodexClient:
                 q.put(None)
 
             threading.Thread(target=read, daemon=True).start()
-            usage = None
             try:
                 p.stdin.write("仅根据文本返回JSON。不要调用工具、访问文件或启动其他代理。\n" + prompt)
                 p.stdin.close()
@@ -124,15 +125,6 @@ class CodexClient:
                         line = ""
                     if line is None:
                         break
-                    if line:
-                        events.write(line)
-                        events.flush()
-                        try:
-                            event = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if event.get("type") == "turn.completed":
-                            usage = event.get("usage")
                     if time.monotonic() - heartbeat > 20:
                         self.log(f"{stage}已运行{round(time.monotonic() - started)}秒")
                         heartbeat = time.monotonic()
@@ -145,10 +137,6 @@ class CodexClient:
                     except subprocess.TimeoutExpired:
                         p.kill()
                         p.wait()
-                self.usage.append({"provider": self.provider, "stage": stage,
-                                   "seconds": round(time.monotonic() - started, 1),
-                                   "usage": usage, "exit_code": p.returncode})
-                write_json(self.directory / "usage.json", self.usage)
         if p.returncode or not output.exists():
             raise RuntimeError(f"Codex {stage}失败；日志：{errors}\n" + errors.read_text(encoding="utf-8")[-1200:])
         return json.loads(output.read_text(encoding="utf-8"))
@@ -183,10 +171,7 @@ class CompatibleAPIClient:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.cancel = cancel or threading.Event()
         self.provider, self.config = provider_config(settings)
-        self.billing = f"{self.provider} API；实际费用以提供商账单为准"
-        self.counter = len(list(self.directory.glob("*.response.json")))
-        usage_path = self.directory / "usage.json"
-        self.usage = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.exists() else []
+        self.counter = len(list(self.directory.glob("*.prompt.txt")))
 
     def request(self, stage, prompt, schema):
         if self.cancel.is_set():
@@ -202,9 +187,7 @@ class CompatibleAPIClient:
         endpoint = base_url if base_url.endswith("/chat/completions") else base_url + "/chat/completions"
         self.counter += 1
         stem = f"{self.counter:03}_{stage}"
-        started = time.monotonic()
         request_path = self.directory / (stem + ".request.json")
-        response_path = self.directory / (stem + ".response.json")
         result_path = self.directory / (stem + ".result.json")
         error_path = self.directory / (stem + ".stderr.log")
         (self.directory / (stem + ".prompt.txt")).write_text(prompt, encoding="utf-8")
@@ -227,12 +210,10 @@ class CompatibleAPIClient:
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json",
-                     "User-Agent": "software-project-generator/1.1"},
+                     "User-Agent": "software-project-generator/1.3"},
             method="POST",
         )
         self.log(f"{self.provider} API开始 {stage}（模型：{model}）")
-        usage = None
-        exit_code = 1
         try:
             try:
                 with urllib.request.urlopen(request, timeout=self.settings["call_timeout_seconds"]) as response:
@@ -245,29 +226,13 @@ class CompatibleAPIClient:
                 error_path.write_text(str(exc), encoding="utf-8")
                 raise RuntimeError(f"{self.provider} API {stage}网络失败：{exc.reason}") from exc
             data = json.loads(raw)
-            write_json(response_path, data)
             content = _message_text(data["choices"][0]["message"])
             result = json.loads(_json_text(content))
             write_json(result_path, result)
-            source_usage = data.get("usage") or {}
-            details = source_usage.get("prompt_tokens_details") or {}
-            completion_details = source_usage.get("completion_tokens_details") or {}
-            usage = {
-                "input_tokens": source_usage.get("prompt_tokens", 0),
-                "cached_input_tokens": details.get("cached_tokens", 0),
-                "output_tokens": source_usage.get("completion_tokens", 0),
-                "reasoning_output_tokens": completion_details.get("reasoning_tokens", 0),
-            }
-            exit_code = 0
             return result
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             error_path.write_text(f"响应解析失败：{exc}", encoding="utf-8")
             raise RuntimeError(f"{self.provider} API没有返回可解析的结构化JSON，详见 {error_path}") from exc
-        finally:
-            self.usage.append({"provider": self.provider, "stage": stage,
-                               "seconds": round(time.monotonic() - started, 1),
-                               "usage": usage, "exit_code": exit_code})
-            write_json(self.directory / "usage.json", self.usage)
 
 
 def create_client(settings, directory, log=print, cancel=None):

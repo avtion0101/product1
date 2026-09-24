@@ -81,8 +81,7 @@ def ensure_environment(root, log, settings):
     if info["free_disk_mb"] < info["required_free_mb"]:
         raise RuntimeError(
             f"生成器所在磁盘只剩{info['free_disk_mb']}MB，至少需要700MB空闲空间（建议2GB）。"
-            "\n请释放空间，或把整个生成器文件夹复制到有空间且可写的目录后再启动。"
-            "\n本次尚未调用模型，不消耗生成Token。")
+            "\n请释放空间，或把整个生成器文件夹复制到有空间且可写的目录后再启动。")
     if not info["document_converter"]:
         if sys.platform == "darwin":
             raise RuntimeError("macOS缺少LibreOffice，无法稳定转换和核验PDF。请先安装：brew install --cask libreoffice")
